@@ -222,6 +222,7 @@ throttle-http=<URL>                  # Set a new throttle URL
 throttle-control-replicas=<replicas> # Set a new comma delimited list of throttle control replicas
 throttle                             # Force throttling
 no-throttle                          # End forced throttling (other throttling may still apply)
+postpone                             # Force postponing cut-over (until file is deleted or unpostpone is issued)
 unpostpone                           # Bail out a cut-over postpone; proceed to cut-over
 panic                                # panic and quit without cleanup
 help                                 # This message
@@ -393,6 +394,33 @@ help                                 # This message
 				return NoPrintStatusRule, err
 			}
 			atomic.StoreInt64(&this.migrationContext.ThrottleCommandedByUser, 0)
+			return ForcePrintStatusAndHintRule, nil
+		}
+	case "postpone":
+		{
+			if arg == "" && this.migrationContext.ForceNamedCutOverCommand {
+				err := fmt.Errorf("User commanded 'postpone' without specifying table name, but --force-named-cut-over is set")
+				return NoPrintStatusRule, err
+			}
+			if arg != "" && arg != this.migrationContext.OriginalTableName {
+				// User explicitly provided table name. This is a courtesy protection mechanism
+				err := fmt.Errorf("User commanded 'postpone' on %s, but migrated table is %s; ignoring request.", arg, this.migrationContext.OriginalTableName)
+				return NoPrintStatusRule, err
+			}
+			if atomic.LoadInt64(&this.migrationContext.CutOverCompleteFlag) > 0 {
+				fmt.Fprintf(writer, "Cut-over already completed. Cannot postpone.\n")
+				return NoPrintStatusRule, nil
+			}
+			if atomic.LoadInt64(&this.migrationContext.InCutOverCriticalSectionFlag) > 0 {
+				fmt.Fprintf(writer, "Cut-over is in critical section. Cannot postpone at this time.\n")
+				return NoPrintStatusRule, nil
+			}
+			if atomic.LoadInt64(&this.migrationContext.IsPostponingCutOver) > 0 {
+				fmt.Fprintf(writer, "Migration is already postponed.\n")
+				return NoPrintStatusRule, nil
+			}
+			atomic.StoreInt64(&this.migrationContext.UserCommandedPostponeFlag, 1)
+			fmt.Fprintf(writer, "Postponed\n")
 			return ForcePrintStatusAndHintRule, nil
 		}
 	case "unpostpone", "no-postpone", "cut-over":

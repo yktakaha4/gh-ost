@@ -215,6 +215,7 @@ type MigrationContext struct {
 	AllEventsUpToLockProcessedInjectedFlag int64
 	CleanupImminentFlag                    int64
 	UserCommandedUnpostponeFlag            int64
+	UserCommandedPostponeFlag              int64
 	CutOverCompleteFlag                    int64
 	InCutOverCriticalSectionFlag           int64
 	PanicAbort                             chan error

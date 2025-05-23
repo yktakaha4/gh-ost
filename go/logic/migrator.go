@@ -523,11 +523,32 @@ func (this *Migrator) cutOver() (err error) {
 				this.migrationContext.Log.Debugf("current HeartbeatLag (%.2fs) is too high, it needs to be less than both --max-lag-millis (%.2fs) and --cut-over-lock-timeout-seconds (%.2fs) to continue", heartbeatLag.Seconds(), maxLagMillisecondsThrottle.Seconds(), cutOverLockTimeout.Seconds())
 				return true, nil
 			}
+
+			// Check for user-commanded postpone via interactive command
+			if atomic.LoadInt64(&this.migrationContext.UserCommandedPostponeFlag) > 0 {
+				if atomic.LoadInt64(&this.migrationContext.IsPostponingCutOver) == 0 {
+					// If postpone-cut-over-flag-file is set, create the file to maintain consistency
+					if this.migrationContext.PostponeCutOverFlagFile != "" {
+						if err := base.TouchFile(this.migrationContext.PostponeCutOverFlagFile); err != nil {
+							this.migrationContext.Log.Errorf("Unable to create postpone-cut-over-flag-file: %s", err.Error())
+						} else {
+							this.migrationContext.Log.Infof("Created postpone-cut-over-flag-file: %s", this.migrationContext.PostponeCutOverFlagFile)
+						}
+					}
+					if err := this.hooksExecutor.onBeginPostponed(); err != nil {
+						return true, err
+					}
+				}
+				atomic.StoreInt64(&this.migrationContext.IsPostponingCutOver, 1)
+				return true, nil
+			}
+
 			if this.migrationContext.PostponeCutOverFlagFile == "" {
 				return false, nil
 			}
 			if atomic.LoadInt64(&this.migrationContext.UserCommandedUnpostponeFlag) > 0 {
 				atomic.StoreInt64(&this.migrationContext.UserCommandedUnpostponeFlag, 0)
+				atomic.StoreInt64(&this.migrationContext.UserCommandedPostponeFlag, 0)
 				return false, nil
 			}
 			if base.FileExists(this.migrationContext.PostponeCutOverFlagFile) {
@@ -540,6 +561,8 @@ func (this *Migrator) cutOver() (err error) {
 				atomic.StoreInt64(&this.migrationContext.IsPostponingCutOver, 1)
 				return true, nil
 			}
+			// File was deleted, reset postpone flags
+			atomic.StoreInt64(&this.migrationContext.UserCommandedPostponeFlag, 0)
 			return false, nil
 		},
 	)
